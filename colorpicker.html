@@ -5,13 +5,13 @@
 </head>
 <script src=./js/drag.js></script>
 
-<body><div id="ImageEditor"  contenteditable="true" style="position: absolute;left: 300px;top: 126px;width: 400px;height: 450px;z-index: 999;background-color: rgb(204, 204, 204);visibility: visible;">
+<body><div id="ImageEditor"  contenteditable="true" style="position: absolute;left: 111px;top: 2px;width: 400px;height: 620px;z-index: 999;background-color: rgb(204, 204, 204);visibility: visible;">
   <div id="CP">
     <div onmousedown="drag(this,event,0)" style="background-color:#0a0a0a">
       <div style="position:absolute;left:0px;top:5px;width: 371px;color:white;" align="center">图片编辑</div>
       <div align="right" ><img style="position: relative;height:24px;width:24px;right: 5px; top: 5px;" src="./img/close.png" onclick="hideQuiz();"><hr></div>
     </div>
-    <div style="width: 386px;height: 400px;margin: 0px 7px auto;text-align: center;">
+    <div style="width: 386px;height:570px;margin: 0px 7px auto;text-align: center;">
        <div align="center" id=preview style="min-height:100px;max-height:200px">请将图片粘贴到此处</div><hr>
       <div align="center">
         <div><label><input type=checkbox name=T id=T onclick="setColorPicker();">设置透明色</label></div><hr>
@@ -37,7 +37,11 @@
               <input type=button onclick="resetColor();" value="重选颜色">
            </div><hr>
         </div>
-        <div><input type=submit></div>
+        <div><input type=button value="生成" onclick="create();"></div><hr>
+        <div>
+           <div >我是验证透明效果的文字</div>
+           <div id=output></div>
+        </div>
       </div>
     </div>
   </div>
@@ -48,6 +52,65 @@
 var ctx;
 var canvas;
 var img;
+
+var ctx2;
+var canvas2;
+
+function create()
+{
+   var o=document.getElementById("output");
+   o.innerHTML="";
+
+
+               var new_img = document.createElement('img');
+               modifyImgToBase64( canvas.toDataURL('image/png'),function(base64Img)
+               {
+                  new_img.setAttribute('src', base64Img);
+                  new_img.style="position: relative; top: -24px;";
+                  o.appendChild(new_img);
+               });
+
+}
+
+//修改图像数据，将指定的颜色(0xRRGGBBAA)改为透明色（0x00000000）
+//32位色中，AA为alpha通道，黑色为0x000000FF
+function modifyImgToBase64(url, callback, outputFormat){
+   canvas2 = document.createElement('CANVAS'),
+   ctx2 = canvas2.getContext('2d',{willReadFrequently:true}),		//响应频繁读写开关
+   img = new Image;
+   img.crossOrigin = 'Anonymous';
+   img.onload = function(){
+      canvas2.height = img.height;
+      canvas2.width = img.width;
+      ctx2.drawImage(img,0,0);
+
+      var imgdata=ctx2.getImageData(0,0,img.width,img.height);
+      var r=document.getElementById('b1').value.toString(10);
+      var g=document.getElementById('b2').value.toString(10);
+      var b=document.getElementById('b3').value.toString(10);
+
+      for(var i=0;i<imgdata.data.length;i+=4)				//匹配，修改
+      {
+          if(imgdata.data[i+0]==r &&
+             imgdata.data[i+1]==g &&
+             imgdata.data[i+2]==b)
+          {
+              imgdata.data[i+0]=0x00;
+              imgdata.data[i+1]=0x00;
+              imgdata.data[i+2]=0x00;
+              imgdata.data[i+3]=0x00;
+          }
+      }
+      ctx2.putImageData(imgdata,0,0);
+
+      var dataURL = canvas2.toDataURL(outputFormat || 'image/png');
+      callback.call(this, dataURL);
+      canvas2 = null;
+   };
+   img.src = url;
+}
+
+
 
 //白板图片资源上传
 window.onload = function () 
@@ -75,11 +138,6 @@ window.onload = function ()
                   new_img.onmousedown=function(){setColor();};
                   var p=document.getElementById('preview');
                   p.innerHTML="";
-//                  if(p.children.length>0)
-  //                {
-    //                 for(var n=p.children.length-1;n>=0;n--)
-      //                  p.removeChild(p.children[n]);
-        //          }
                   document.getElementById('preview').appendChild(new_img);
                });
             }
@@ -97,10 +155,9 @@ window.onload = function ()
 }
 
 //CanvasRenderingContext2D
-
 function convertImgToBase64(url, callback, outputFormat){
    canvas = document.createElement('CANVAS'),
-   ctx = canvas.getContext('2d',{willReadFrequently:true}),
+   ctx = canvas.getContext('2d',{willReadFrequently:true}),		//响应频繁读写开关
    img = new Image;
    img.crossOrigin = 'Anonymous';
    img.onload = function(){
@@ -109,7 +166,7 @@ function convertImgToBase64(url, callback, outputFormat){
       ctx.drawImage(img,0,0);
       var dataURL = canvas.toDataURL(outputFormat || 'image/png');
       callback.call(this, dataURL);
-      canvas = null;
+      //canvas = null;							//modifyImgToBase64中要用，所以不能清掉。
    };
    img.src = url;
 }
@@ -175,7 +232,7 @@ function setStatus(x,y)
          for(var i=0;i<4;i++)
          {
             var b=document.getElementById("b"+(i+1));
-            b.value=data.data[i].toString(16).toUpperCase();
+            b.value=data.data[i];
          }
       }
    }
@@ -190,5 +247,4 @@ function setColorPicker()
 }
 
 </script>
-</body>
-</html>
+</body></html>
