@@ -1,1 +1,739 @@
-<html><head><title>hello</title></head><body></body></html>
+<html>
+<head>
+<meta http-equiv="content-type" content="text/html;charset=UTF-8">
+<title>Canvas捡色器</title>
+</head>
+<script src=./js/drag.js></script>
+
+<body><div id="ImageEditor"  contenteditable="true" style="position: absolute;left: 2px;top: 2px;width: 400px;height: 620px;z-index: 999;background-color: rgb(204, 204, 204);visibility: visible;">
+  <div id="CP">
+    <div onmousedown="drag(this,event,0)" style="background-color:#0a0a0a">
+      <div style="position:absolute;left:0px;top:5px;width: 371px;color:white;" align="center">图片编辑</div>
+      <div align="right" ><img style="position: relative;height:24px;width:24px;right: 5px; top: 5px;" src="./img/close.png" onclick="hideQuiz();"><hr></div>
+    </div>
+    <div style="width: 386px;height:570px;margin: 0px 7px auto;text-align: center;">
+       <div align="center" id=PREVIEW style="min-height:100px;max-height:200px">请将图片粘贴到此处</div>
+       <div align="center" id=SHIELD style="height:0px;"></div><hr>
+      <div align="center">
+        <div id=SETTRANS style="display:none"><label><input type=checkbox name=T id=T onclick="setColorPicker();">设置透明色</label></div><hr>
+        <div id="COLORPICKER"  style="display:none">
+           <div style="height:40px">
+              <input type=button id=color  style="position: relative;left: 0px;top:0px;width:40px;height:40px;background:white;border:black;">
+           </div><hr>
+           <div >
+              <input type=range id=GATE max=255 min=0 value=0  step=1 onchange="setPreview(this);"><br>
+              <span id="GVALUE"></span>
+           </div><hr>
+           <div>
+              <input type=button onclick="resetColor();" value="重选颜色">
+              <label><input type=checkbox id=NEWOLD onclick="addColor();">追加颜色</label><label><input type=radio NAME=MTYPE value="CM" checked onclick="setAlgorithm(this);">替换全部</label><label><input type=radio NAME=MTYPE value="FF" onclick="setAlgorithm(this);">淹没填充</label>
+           </div><hr>
+        </div>
+        <div><input type=button value="替换全部" onclick="methodCompleteMatching();"><input type=button value="淹没填充" onclick="methodFloodMatching();"></div><hr>
+        <div style="display:none"><select multiple id=list style="width: 300px;"></select></div><hr>
+        <div>
+           <!--div >我是验证透明效果的文字<br>我是验证透明效果的文字<br>我是验证透明效果的文字<br></div-->
+           <div id=OUTPUT></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+//原始图片的粘贴和显示
+//以及图片透明操作的控制
+var bColorPicker=false;		//捡色功能开启控制
+var bColorSet=false;		//在图片上单击，即完成捡色操作。
+var bShieldUpdating=false;	//用于在生成预览效果图时，屏蔽因鼠标移动而发起的新的生成事件
+
+var bNeworOld=false;		//追加还是新建
+var bImgCreated=false;		//新图片已创建
+
+var X=Y=-1;			//已选择的点的坐标
+var R,G,B,A;			//所选点/鼠标当前所在点的sRGB颜色和阈值
+var GATE=0;			//阈值 当为0是，完全匹配，当>0时，匹配（R±GATE,G±GATE,B±GATE）
+var WIDTH,HEIGHT,PREVIEW=false;	//图片的宽高，以及生成状态：是否实时预览模式
+
+var canvasOriginal;		//原图的canvas
+var ctxOriginal;		//原图的ctx
+var imgOriginalData;		//原图的图像数据
+var img;
+
+var strAlgorithm="CM";		//算法类型   CM：全图颜色匹配替换   FF：Flood填充
+
+//响应粘贴图片事件
+/*****************************
+HTML中，需要有如下元素：
+    DIV 	 ID：	ImageEditor
+    DIV 	 ID: 	SETTRANS
+    DIV 	 ID: 	PREVIEW
+    DIV 	 ID: 	OUTPUT
+    CHECKBOX 	 ID:	NEWOLD
+粘贴图片后，在PREVIEW里动态生成了：
+    IMG	 	 ID:	ORIMG
+******************************/
+window.onload = function () 
+{
+   function pasteImg(e) 							//粘贴图片的处理操作
+   {
+      if (e.clipboardData.items) 
+      {
+         var ele = e.clipboardData.items
+         for (var i = 0; i < ele.length; ++i) 					//遍历剪贴板
+         {
+            if (ele[i].kind == 'file' && ele[i].type.indexOf('image/') !== -1) 	//文件，图形
+            {
+               var blob = ele[i].getAsFile();					//获取文件信息 File类型，包含name,size,type,lastModified
+               window.URL = window.URL || window.webkitURL;
+               var blobUrl = window.URL.createObjectURL(blob);			//导出该资源在内存中的URL地址，形如：blob:http://localhost/CLSID
+               convertImgToBase64(blobUrl, function(base64Img)			//利用canvas将URL的数据转成BASE64格式的图片，返回base64Img
+               {
+                  var new_img = document.createElement('img');			//动态创建HTML图片元素
+                  new_img.id="ORIMG";
+                  new_img.setAttribute('src', base64Img);
+                  new_img.style="cursor: crosshair;position:relative;top:0px;left:0px;";
+                  bImgCreated=false
+                  document.getElementById('NEWOLD').checked=false;		//重置“追加颜色”设置
+                  document.getElementById('OUTPUT').innerHTML="";		//清空上次生成的结果
+                  document.getElementById('PREVIEW').innerHTML="";		//清空预览数据
+                  document.getElementById('PREVIEW').appendChild(new_img);	//在预览位置，插入刚粘贴的图形
+                  document.getElementById('SETTRANS').style.display="block";	//显示“设置透明色”操作控制
+               });
+               break;								//只处理第一张图。
+            }
+         }
+      } 
+      else 
+      {
+         alert('您的浏览器不支持粘贴图片功能,请换更高版本浏览器.');
+      }
+   }
+   document.getElementById('ImageEditor').onpaste = function () {		//ImageEditor响应粘贴操作
+      pasteImg(event);								//处理图片的粘贴
+      return false;
+   };
+}
+
+//将图片的数据URL转换成base64格式的图片
+function convertImgToBase64(url, callback, outputFormat){
+   var canvasOriginal = document.createElement('CANVAS'),				//创建CANVAS。这里的三个变量（canvasOriginal,ctxOriginal,img）为全局变量。
+   ctxOriginal = canvasOriginal.getContext('2d',{willReadFrequently:true}),	//响应频繁读写开关
+   img = new Image;								//创建Image对象
+   img.crossOrigin = 'Anonymous';
+   img.onload = function()
+   {
+      canvasOriginal.height = HEIGHT = img.height;				//更新全局变量WIDTH,HEIGHT
+      canvasOriginal.width  = WIDTH  = img.width;
+      ctxOriginal.drawImage(img,0,0);
+      var dataURL = canvasOriginal.toDataURL(outputFormat || 'image/png');	//转换成PNG格式
+      callback.call(this, dataURL);
+      canvasOriginal = null;
+   };
+   img.src = url;								//传入数据，激发onload事件
+}
+
+//控制捡色功能的开启/关闭
+//添加一个透明的遮罩图，用于响应鼠标选色操作。
+/*****************************
+HTML中，需要有如下元素：
+    IMG	 	 ID:	ORIMG
+    DIV		 ID:	SHIELD
+    DIV		 ID:	COLORPICKER
+开启捡色功能后，在SHIELD里动态生成了：
+    IMG	 	 ID:	SHIELDIMG
+******************************/
+function setColorPicker()
+{
+   if(bColorPicker)							//显示透明色操作的相关控件
+   {
+      document.getElementById("COLORPICKER").style.display="none";
+   }
+   else
+   {
+      document.getElementById("COLORPICKER").style.display="block";
+
+      var imgOriginal=document.getElementById("ORIMG");			//获取原始图
+
+      var imgShield=document.createElement("IMG");			//生成透明遮罩，用于响应鼠标操作      
+      var canvasShield = document.createElement('CANVAS'),
+      ctxShield = canvasShield.getContext('2d',{willReadFrequently:true}),
+      imgShield = new Image;
+      imgShield.crossOrigin = 'Anonymous';
+      imgShield.onload = function()
+      {
+         canvasShield.width  = WIDTH = imgShield.width;
+         canvasShield.height = HEIGHT= imgShield.height;		//这里其实没必要更新WIDTH和HEIGHT，或者直接用WIDTH和HEIGHT，而非imgShield的高宽。
+         var dataURL = canvasShield.toDataURL( 'image/png');
+
+         var shield_img = document.createElement('img');
+         shield_img.id="SHIELDIMG";					//SHIELDIMG
+         shield_img.setAttribute('src', dataURL);
+         shield_img.style="cursor:crosshair; position:relative; left:0px;";
+         shield_img.style.top=-HEIGHT;
+         shield_img.onmousemove=function(){ showPos(this,event);};		//响应鼠标在图片上移动的事件，获取鼠标在图片上所指的点的坐标
+         shield_img.onmouseout=function() { resetPos(this);     };		//响应鼠标移出图片的事件，重置获取的鼠标在图片上的点的坐标
+         shield_img.onmousedown=function(){ setColor();         };		//响应鼠标在图片上的单击事件，锁定鼠标在图片上的点的坐标，屏蔽鼠标后续在图片上的其它事件
+         
+         bImgCreated=false;						//刚开启，无生成图
+
+         document.getElementById('SHIELD').innerHTML="";
+         document.getElementById('SHIELD').appendChild(shield_img);	//清空、更新预览数据
+
+         canvasShield = null;
+      };
+      imgShield.src = imgOriginal.src;					//导入原始图
+   }
+   bColorPicker=!bColorPicker;
+}
+
+//透明算法控制
+function setAlgorithm(o)
+{
+   strAlgorithm=o.value;
+}
+
+//GATE数值的页面显示
+function setPreview(o)
+{
+   document.getElementById("GVALUE").innerHTML=o.value;
+}
+
+//追加捡色
+//控制接下来的透明操作，是使用原始图，还是使用上一次生成的结果
+function addColor()
+{
+   bNeworOld=!bNeworOld;
+}
+
+//当鼠标在图片上移动时，显示当前鼠标在图片内的坐标
+/*****************************
+HTML中，需要有如下元素：
+    IMG	 	 ID:	ORIMG
+    DIV		 ID:	SHIELD
+开启捡色功能后，在SHIELD里动态更新了：
+    IMG	 	 ID:	SHIELDIMG
+******************************/
+function showPos(o,ev)
+{
+   if(bColorPicker && !bColorSet && !bShieldUpdating)	//开启捡色功能，且所捡颜色未设定，另添加预览图片更新未结束时再次激发更新的控制bShieldUpdating。
+   {
+      bShieldUpdating=true;
+      var nX=ev.clientX-o.offsetLeft-parseInt(o.parentElement.parentElement.parentElement.parentElement.style.left);
+      var nY=ev.clientY-o.offsetTop-parseInt(o.parentElement.parentElement.parentElement.parentElement.style.top);	//计算鼠标相对于图片的坐标
+
+      //获取图片内鼠标所在坐标的点的颜色值，更新界面，并显示遮罩层
+      if(nX>0 && nY>0 && nX<=WIDTH && nY<=HEIGHT)			//鼠标在图片上移动时的坐标，从(1,1)开始，而图像数据从(0,0)开始
+      {
+         X=nX-1;
+         Y=nY-1;
+
+         var canvasOriginal = document.createElement('CANVAS'),				//导入源图，获取图像数据
+         ctxOriginal = canvasOriginal.getContext('2d',{willReadFrequently:true}),	//响应频繁读写开关
+         imgOriginal = new Image;
+         imgOriginal.crossOrigin = 'Anonymous';
+         imgOriginal.onload = function()
+         {
+            canvasOriginal.height = HEIGHT= imgOriginal.height;
+            canvasOriginal.width  = WIDTH = imgOriginal.width;
+            ctxOriginal.drawImage(imgOriginal,0,0);
+
+            var selectedDotArr=ctxOriginal.getImageData(X,Y,1,1);			//从源图获取当前点颜色
+            if(selectedDotArr.colorSpace=="srgb" && selectedDotArr.data.length==4)	//sRGB
+            {
+               if(R==selectedDotArr.data[0] && 
+                  G==selectedDotArr.data[1] && 
+                  B==selectedDotArr.data[2] && 
+                  A==selectedDotArr.data[3] ) 					//颜色没变化，不改变当前遮罩图。
+               {
+                  bShieldUpdating=false;						//当前可响应遮罩更新
+                  return;
+               }
+
+               var c=document.getElementById("color");
+               c.style.background="rgb("+selectedDotArr.data[0]+","
+                                  +selectedDotArr.data[1]+","
+                                  +selectedDotArr.data[2]+")";				//更新界面中的颜色色块
+
+               R = selectedDotArr.data[0];
+               G = selectedDotArr.data[1];
+               B = selectedDotArr.data[2];
+               A = selectedDotArr.data[3];						//RGBA
+               GATE=parseInt(document.getElementById("GATE").value);			//阈值[0,255]
+
+               //由鼠标的点击获取原图的颜色操作完成，接下来更新实时预览图
+               var imgOriginalData=ctxOriginal.getImageData(0,0,WIDTH,HEIGHT);	//获取原图的全部图像数据
+               if(strAlgorithm=="CM")							//完全匹配
+               {
+                  var canvasShield = document.createElement('CANVAS'),			//创建遮罩图CANVAS
+                  ctxShield = canvasShield.getContext('2d',{willReadFrequently:true});	//响应频繁读写开关
+
+                  canvasShield.width  = WIDTH;
+                  canvasShield.height = HEIGHT;
+
+                  var imgShieldData=ctxShield.getImageData(0,0,WIDTH,HEIGHT);		//获取遮罩图的图像数据句柄
+
+                  for(var i=0;i<imgOriginalData.data.length;i+=4)			//在原图中匹配，修改遮罩图数据
+                  {
+                     if(abs(imgOriginalData.data[i+0]-R)<=GATE &&			//R,G,B,A
+                        abs(imgOriginalData.data[i+1]-G)<=GATE &&
+                        abs(imgOriginalData.data[i+2]-B)<=GATE &&
+                        abs(imgOriginalData.data[i+3]-A)<=GATE)				//用源图数据进行匹配
+                     {
+                        imgShieldData.data[i+0]=255-R;
+                        imgShieldData.data[i+1]=255-G;
+                        imgShieldData.data[i+2]=255-B;
+                        imgShieldData.data[i+3]=0xFF;					//高亮反色，输出到遮罩图上。
+                     }
+                     else
+                     {
+                        imgShieldData.data[i+3]=0x00;					//匹配失败的颜色，全部改成透明度
+                     }
+                  }
+                  ctxShield.putImageData(imgShieldData,0,0);				//写回遮罩图
+
+                  var dataURL = canvasShield.toDataURL( 'image/png');			//设成图像数据链接
+
+                  var shield_img = document.createElement('img');			//动态生成遮罩图
+                  shield_img.id="SHIELDIMG";
+                  shield_img.setAttribute('src', dataURL);
+                  shield_img.style="cursor:crosshair; position:relative; left:0px;";
+                  shield_img.style.top=-HEIGHT;
+                  shield_img.onmousemove=function(){showPos(this,event);};		//添加鼠标操作响应
+                  shield_img.onmouseout=function(){resetPos(this);};
+                  shield_img.onmousedown=function(){setColor();};
+         
+                  document.getElementById('SHIELD').innerHTML="";
+                  document.getElementById('SHIELD').appendChild(shield_img);		//清空、更新预览数据
+
+                  canvasShield = null;							//回收资源
+
+                  bShieldUpdating=false;
+                  //bImgCreated=false;							//未生成最终图像
+               }
+               else if(strAlgorithm=="FF")				//Flood填充
+               {
+                  PREVIEW=true;
+                  Flood(imgOriginalData);
+                  bShieldUpdating=false;
+               }
+
+            }
+            canvasOriginal = null;
+         };
+         imgOriginal.src=document.getElementById('ORIMG').src;
+      }
+   }
+}
+
+
+//鼠标移出图片位置，则重置坐标：归零
+function resetPos(o)
+{
+   if(bColorPicker && !bColorSet)			//开启捡色功能，且所捡颜色未设定
+   {
+      X=-1;
+      Y=-1;
+   }
+   bShieldUpdating=false;				//当前遮罩图不在更新，也即可以继续触发更新操作。
+}
+
+//鼠标单击图片，完成捡色确定
+function setColor()
+{
+   if(bColorPicker && !bColorSet)			//开启捡色功能，且所捡颜色未设定
+   {
+      bColorSet=true;					//捡色操作已完成，其它捡色相关的功能（实时预览，捡色）都将被屏蔽。
+/*
+      dataArr.push(new Array(x,y,r,g,b,a));
+      var list=document.getElementById("list");
+      list.appendChild(new Option(x+"|"+y+"|"+r+"|"+g+"|"+b+"|"+a,x+"|"+y+"|"+r+"|"+g+"|"+b+"|"+a));
+*/
+   }
+}
+
+//重新开始捡色
+function resetColor()
+{
+   bColorSet=false;					//当点击“重新捡色”按钮时，恢复捡色功能
+}
+
+
+//填充算法相关
+var posArr;		 				//与目标图像分辨率一致的二维数组，凡需要改为透明色的点，在相应位置，数值为1。
+var posL1Arr=new Array();				//一层
+var posL2Arr=new Array();				//二层
+
+/**************************************
+*
+**   区域填充算法
+**
+**      2
+**     212			 			//0所在位置为鼠标所在的初始位置
+**    21012			 			//1所在的位置，为0点的上下左右各点，记为一层
+**     212                    				//2所在的位置，为一层中各点的上下左右各点（去掉了已被记录的重复项），记为二层
+**      2						//以此向外衍生探测
+*
+***************************************/
+function Flood(imgData)
+{
+   posArr=new Array(HEIGHT);   				//初始化空数据的二维数组posArr[HEIGHT][WIDTH];
+   for(var i=0;i<HEIGHT;i++)
+      posArr[i]=new Array(WIDTH);
+   posArr[Y][X]=1;					//鼠标所在点必定符合修改的条件
+
+   posL1Arr.length	= 0;				//归零
+   posL2Arr.length	= 0;
+   posL1Arr.push(Array(X,Y));				//第一轮计算，从鼠标所在点开始
+
+   checkXY(imgData);			        		//检测posL1Arr和posL2Arr中的点，
+   if(PREVIEW)
+      drawIMG(imgData);						//根据posArr中的记录，修改并生成遮罩图。
+}
+
+
+//获取需要设为透明的点的坐标
+function checkXY(imgData)				//获取点（x,y）周围的四个点
+{
+   var bNeedNextLevelCheck=true;		//如果找不到符合要求的点，就返回false，算法结束。
+   while(bNeedNextLevelCheck)
+   {
+      bNeedNextLevelCheck=true;
+      posL2Arr.length=0;			//归零。存放找到的符合匹配要求的新点。
+      posL1Arr.forEach(function(xy)		//获取posL1Arr中的各点的坐标的上下左右四个点。
+      {
+         if(checkDot(imgData,xy[0]+1 , xy[1]))			//检查右边点。
+         {							//该点符合匹配要求，保存到posArr中，并存入posL2Arr，以便下一轮检测
+            if(posArr[xy[1]][xy[0]+1]==undefined)		//防止重复保存符合要求的点
+            {
+               posArr[xy[1]][xy[0]+1]=1;			//置1表示该点是我们要找的颜色
+               posL2Arr.push(Array(xy[0]+1, xy[1]));		//为下一轮检测做准备
+               bNeedNextLevelCheck=true;			//找到了新的点，需要进入下一轮
+            }
+         }
+
+         if(checkDot(imgData,xy[0]-1 , xy[1]))			//检查左边点。
+            {
+               if(posArr[xy[1]][xy[0]-1]==undefined)
+               {
+                  posArr[xy[1]][xy[0]-1]=1;
+                  posL2Arr.push(Array(xy[0]-1 , xy[1]));
+                  bNeedNextLevelCheck=true;
+               }
+           }
+
+         if(checkDot(imgData,xy[0], xy[1]+1))			//检查下方点。
+         {
+            if(posArr[xy[1]+1][xy[0]]==undefined)
+            {
+               posArr[xy[1]+1][xy[0]]=1;
+               posL2Arr.push(Array(xy[0] , xy[1]+1));
+               bNeedNextLevelCheck=true;
+            }
+         }
+
+         if(checkDot(imgData,xy[0] , xy[1]-1))			//检查上方点。
+         {
+            if(posArr[xy[1]-1][xy[0]]==undefined)
+            {
+               posArr[xy[1]-1][xy[0]]=1;
+               posL2Arr.push(Array(xy[0] , xy[1]-1));
+               bNeedNextLevelCheck=true;
+            }
+         }
+      });
+
+      if(bNeedNextLevelCheck)			//刚才一轮，发现了新的点，需要继续检测。posL1Arr与posL2Arr交替。
+      {						//算法同上一轮，只是源数据在posL2Arr中，而找到的新点，需要存入posL1Arr。
+         bNeedNextLevelCheck=false;
+         posL1Arr.length=0;			//归零
+         posL2Arr.forEach(function(xy)		//获取posL2Arr中的各点的坐标的上下左右四个点。
+         {
+            if(checkDot(imgData,xy[0]+1 , xy[1]))		//检查右边点。
+            {
+               if(posArr[xy[1]][xy[0]+1]==undefined)
+               {
+                  posArr[xy[1]][xy[0]+1]=1;
+                  posL1Arr.push(Array(xy[0]+1, xy[1]));
+                  bNeedNextLevelCheck=true;	
+               }
+            }
+
+            if(checkDot(imgData,xy[0]-1 , xy[1]))		//检查左边点。
+            {
+               if(posArr[xy[1]][xy[0]-1]==undefined)
+               {
+                  posArr[xy[1]][xy[0]-1]=1;
+                  posL1Arr.push(Array(xy[0]-1 , xy[1]));
+                  bNeedNextLevelCheck=true;			
+               }
+            }
+
+            if(checkDot(imgData,xy[0], xy[1]+1))		//检查下方点。
+            {
+               if(posArr[xy[1]+1][xy[0]]==undefined)
+               {
+                  posArr[xy[1]+1][xy[0]]=1;
+                  posL1Arr.push(Array(xy[0] , xy[1]+1));
+                  bNeedNextLevelCheck=true;			
+               }
+            }
+
+            if(checkDot(imgData,xy[0] , xy[1]-1))		//检查上方点。
+            {
+               if(posArr[xy[1]-1][xy[0]]==undefined)
+               {
+                  posArr[xy[1]-1][xy[0]]=1;
+                  posL1Arr.push(Array(xy[0] , xy[1]-1));
+                  bNeedNextLevelCheck=true;			
+               }
+            }
+         });
+      }
+   }
+}
+
+
+
+//检测是否出界，并检测坐标（x,y）所对应的点是否满足颜色匹配
+function checkDot(imgData,x,y)
+{
+   if(x>=0 && x<WIDTH && y>=0 && y<HEIGHT)			//x:[0,WIDTH)    y:[0,HEIGHT)
+   {
+      if(abs(imgData.data[(y*WIDTH+x)*4+0]-R)<=GATE &&	//如果点（x,y）的颜色符合要求，就返回true
+         abs(imgData.data[(y*WIDTH+x)*4+1]-G)<=GATE &&	//否则返回false
+         abs(imgData.data[(y*WIDTH+x)*4+2]-B)<=GATE &&
+         abs(imgData.data[(y*WIDTH+x)*4+3]-A)<=GATE )
+      {
+         return true;  
+      }
+      else return false;
+   }
+   else return false;						//坐标出界，返回false
+}
+
+
+//计算绝对值
+//据说比Math.abs快？
+function abs(n)
+{
+   return (n^(n>>31))-(n>>31);
+}
+
+
+/************************************
+*
+**   按照posArr中的数据，进行图形绘制
+*
+**************************************/
+function drawIMG(imgData)
+{
+   var canvasShield = document.createElement('CANVAS'),				//创建遮罩图CANVAS
+   ctxShield = canvasShield.getContext('2d',{willReadFrequently:true});		//响应频繁读写开关
+
+   canvasShield.width  = WIDTH;							//图像宽度
+   canvasShield.height = HEIGHT;						//图像高度
+
+   var imgShieldData=ctxShield.getImageData(0,0,WIDTH,HEIGHT);			//获取遮罩图的全部图像数据
+
+/*
+//待研究
+   var arr= new Uint32Array(imgShieldData.data);                 	//32位数
+
+   var Uint32Color= (R<<24) | (G<<16) | (B<<8) | A;			//鼠标所选点的32位颜色值。
+   var Uint32PairedColor =  ((255-R)<<24) | ((255-G)<<16) | ((255-B)<<8) | 0xFF;	//反色
+
+   for(var m=0;m<HEIGHT;m++)						//在原图中匹配，修改遮罩图数据
+   {
+      for(var n=0;n<WIDTH;n++)
+      {
+         if(posArr[m][n]==1)						//与所选颜色相匹配的点，设置为补色
+         {
+            arr[m*WIDTH+n]=Uint32PairedColor;
+         }
+         else								//其它点，设为透明
+         {
+            arr[m*WIDTH+n]=0xFF00FF00;
+         }
+      }
+   }
+   imgShieldData.data.set(arr);
+*/
+
+      for(var m=0;m<HEIGHT;m++)						//在原图中匹配，修改遮罩图数据
+      {									//Y轴扫描
+         for(var n=0;n<WIDTH;n++)						//X轴扫描
+         {
+            if(posArr[m][n]==1)						//与所选颜色相匹配的点，则设置为高亮补色，挡住下层原图像
+            {
+               imgShieldData.data[(m*WIDTH+n)*4+0]=255-R;
+               imgShieldData.data[(m*WIDTH+n)*4+1]=255-G;
+               imgShieldData.data[(m*WIDTH+n)*4+2]=255-B;
+               imgShieldData.data[(m*WIDTH+n)*4+3]=0xff;			//不透明
+            }
+            else								//其它点，设为透明，透出下层原图像。
+            {
+               imgShieldData.data[(m*WIDTH+n)*4+0]=0x00;
+               imgShieldData.data[(m*WIDTH+n)*4+1]=0x00;
+               imgShieldData.data[(m*WIDTH+n)*4+2]=0x00;
+               imgShieldData.data[(m*WIDTH+n)*4+3]=0x00;			//透明
+            }
+         }
+      }
+ 
+
+   ctxShield.putImageData(imgShieldData,0,0);			//写回
+   var dataURL = canvasShield.toDataURL( 'image/png');		//设成图像数据链接
+
+   var shield_img = document.createElement('img');			//生成遮罩图
+   shield_img.id="SHIELDIMG";
+   shield_img.setAttribute('src', dataURL);
+   shield_img.style="cursor:crosshair; position:relative; left:0px;";
+   shield_img.style.top=-HEIGHT;
+   shield_img.onmousemove=function(){showPos(this,event);};	//添加鼠标操作响应
+   shield_img.onmouseout=function(){resetPos(this);};
+   shield_img.onmousedown=function(){setColor();};
+  
+   document.getElementById('SHIELD').innerHTML="";
+   document.getElementById('SHIELD').appendChild(shield_img);	//清空、更新预览数据
+  
+   canvasShield = null;						//回收资源
+}
+
+//生成透明图：匹配全部
+function methodCompleteMatching()
+{
+   var output_img = document.createElement('img');
+   doCompleteMatching(function(base64Img)
+   {
+      output_img.setAttribute('src', base64Img);
+      output_img.id="NEWIMG";
+      output_img.style="position: relative; top: 0px;";
+
+      document.getElementById('OUTPUT').innerHTML="";
+      document.getElementById('OUTPUT').appendChild(output_img);	//清空、更新预览数据
+
+      bImgCreated=true;							//已生成图像，可用于二次叠加
+      bColorSet=false;							//捡色已完成，可继续捡色
+   });
+}
+
+
+
+//修改图像数据，将指定的颜色(0xRRGGBBAA)改为透明色（0x00000000）
+//32位色中，AA为alpha通道，黑色为0x000000FF
+function doCompleteMatching( callback, outputFormat){
+   var canvasModified = document.createElement('CANVAS'),
+   ctxModified = canvasModified.getContext('2d',{willReadFrequently:true}),	//频繁读写开关
+   imgModified = new Image;
+   imgModified.crossOrigin = 'Anonymous';
+   imgModified.onload = function()
+   {
+      canvasModified.height = imgModified.height;
+      canvasModified.width = imgModified.width;
+      ctxModified.drawImage(imgModified,0,0);
+
+      var imgModifiedData=ctxModified.getImageData(0,0,imgModified.width,imgModified.height);		//获取图像所有数据
+
+      if(bColorPicker && bColorSet)	//开启捡色功能，且所捡颜色未设定
+      {
+         for(var i=0;i<imgModifiedData.data.length;i+=4)				//匹配，修改
+         {
+            if(abs(imgModifiedData.data[i+0]-R)<=GATE &&				//R,G,B,A
+               abs(imgModifiedData.data[i+1]-G)<=GATE &&
+               abs(imgModifiedData.data[i+2]-B)<=GATE &&
+               abs(imgModifiedData.data[i+3]-A)<=GATE)
+            {
+               imgModifiedData.data[i+0]=0x00;
+               imgModifiedData.data[i+1]=0x00;
+               imgModifiedData.data[i+2]=0x00;
+               imgModifiedData.data[i+3]=0x00;
+            }
+         }
+      }
+      ctxModified.putImageData(imgModifiedData,0,0);					//写回
+
+      var dataURL = canvasModified.toDataURL(outputFormat || 'image/png');	//生成图片数据的URL
+      callback.call(this, dataURL);
+      canvasModified = null;
+   };
+   if(!bNeworOld || bImgCreated==false)
+      imgModified.src=document.getElementById('ORIMG').src;
+   else
+      imgModified.src=document.getElementById('NEWIMG').src;
+}
+
+
+
+//生成透明图：flood淹没填充
+function methodFloodMatching()
+{
+   var output_img = document.createElement('img');
+   doFloodFilling(function(base64Img)
+   {
+      output_img.setAttribute('src', base64Img);
+      output_img.id="NEWIMG";
+      output_img.style="position: relative; top: 0px;";
+
+      document.getElementById('OUTPUT').innerHTML="";
+      document.getElementById('OUTPUT').appendChild(output_img);	//清空、更新预览数据
+
+      bImgCreated=true;							//已生成图像，可用于二次叠加
+      bColorSet=false;							//捡色已完成，可继续捡色
+   });
+}
+
+
+//修改图像数据，将指定的颜色(0xRRGGBBAA)改为透明色（0x00000000）
+//32位色中，AA为alpha通道，黑色为0x000000FF
+function doFloodFilling(callback, outputFormat){
+   var canvasModified = document.createElement('CANVAS'),
+   ctxModified = canvasModified.getContext('2d',{willReadFrequently:true}),		//响应频繁读写开关
+   imgModified = new Image;
+   imgModified.crossOrigin = 'Anonymous';
+   imgModified.onload = function()
+   {
+      canvasModified.height = HEIGHT;
+      canvasModified.width = WIDTH;
+      ctxModified.drawImage(imgModified,0,0);
+
+      imgData=ctxModified.getImageData(0,0,imgModified.width,imgModified.height);
+
+      if(bColorPicker && bColorSet)	//开启捡色功能，且所捡颜色未设定
+      {
+         //var rgbawhArr=new Array(dataArr[3],dataArr[4],dataArr[5],dataArr[6],img.width,img.height,dataArr[7],dataArr[8]);
+         PREVIEW=false;
+         Flood(imgData);	//IMG,X,Y,(R,G,B,A,Width,Height,Gate,Preview)
+
+         for(var m=0;m<HEIGHT;m++)						//在原图中匹配，修改遮罩图数据
+         {									//Y轴扫描
+            for(var n=0;n<WIDTH;n++)						//X轴扫描
+            {
+               if(posArr[m][n]==1)						//与所选颜色相匹配的点，则设置为高亮补色，挡住下层原图像
+               {
+                  imgData.data[(m*WIDTH+n)*4+0]=0x00;
+                  imgData.data[(m*WIDTH+n)*4+1]=0x00;
+                  imgData.data[(m*WIDTH+n)*4+2]=0x00;
+                  imgData.data[(m*WIDTH+n)*4+3]=0x00;			//透明
+               }
+            }
+         }
+      }
+      ctxModified.putImageData(imgData,0,0);
+
+      var dataURL = canvasModified.toDataURL(outputFormat || 'image/png');
+      callback.call(this, dataURL);
+      canvasModified = null;
+   };
+   if(!bNeworOld || bImgCreated==false)
+      imgModified.src=document.getElementById('ORIMG').src;
+   else
+      imgModified.src=document.getElementById('NEWIMG').src;
+}
+
+
+
+
+
+</script>
+</body></html>
